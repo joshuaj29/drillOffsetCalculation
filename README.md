@@ -1,7 +1,6 @@
 # drillOffsetCalculation
 Summary:
 With a input xray image of a hole-to-pad, output an offset value with the identified contours. 
-
 Uses python OpenCV and numpy libraries.
 
 
