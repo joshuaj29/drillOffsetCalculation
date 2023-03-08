@@ -7,11 +7,6 @@ origImg = img.copy()
 
 image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-# Equalized histogram
-# create a CLAHE object (Arguments are optional).
-#clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(5,5))
-#cl1 = clahe.apply(blur2)
-
 blur = cv2.GaussianBlur(image, (7,7), 0)
 
 thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
@@ -20,7 +15,7 @@ thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
 
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
 opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations = 1)
-#closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations = 1)
+
 
 # Find contours
 contours,hierarchy = cv2.findContours(opening, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
@@ -73,27 +68,12 @@ for k in range(len(inners)):
         print(math.dist(centers[k],centers[k+1]))
 
 
-
-
-
-
-# Show the image
-#cv2.imshow('Detected Contours', img)
-#cv2.imshow('closing', opening)
-#cv2.imshow('thresh', thresh)
-#cv2.imshow('histEqual', cl1)
-
 #show images side by side
 display = np.concatenate((origImg, img), axis=1)
 cv2.imshow('Input | Detected Contours', display)
 cv2.waitKey(0)
 cv2.destroyAllWindows()
 
-
-
-
-# use RETR_EXTERNAL and aspect ratio to only get full pads then perform
-# another image processing on result?
 
 
 
