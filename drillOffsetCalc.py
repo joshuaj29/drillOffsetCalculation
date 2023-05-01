@@ -19,7 +19,7 @@ origImg = img.copy()
 image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 # Use a GaussianBlur to smoothen xray artifacts
-blur = cv2.GaussianBlur(image, (7,7), 0)
+blur = cv2.GaussianBlur(image, (17,17), 0)
 
 # threshold with an adaptive mean due to narrow histogram
 # binary inverse threshold due to the way contours are found and our original image color
