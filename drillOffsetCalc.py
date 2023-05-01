@@ -53,7 +53,7 @@ def detect_contours(imgFile, loopIndex, contours=contours, hierarchy=hierarchy):
         cv2.FONT_HERSHEY_SIMPLEX,0.35,(0,255,255),1,cv2.LINE_AA)   
 
 cnt = []
-inners = []
+inners = {}
 # Draw all detected contours on image in green with a thickness of 1 pixel
 # loop looks at inner two tiers, 2nd and 3rd hierarchy tier
 for i in range(len(hierarchy)):
@@ -62,13 +62,13 @@ for i in range(len(hierarchy)):
     if currentH[2] == -1 and currentH[3] >= 0:
         cnt.append(contours[i])
         detect_contours(img, i)
-        inners.append(0)
+        inners[f'{i}'] = 0
     
     # unfilled, yes child, yes parent
     elif currentH[2] >= 0 and currentH[3] >= 0:
         cnt.append(contours[i])
         detect_contours(img, i)
-        inners.append(1)
+        inners[f'{i}'] = 1
 
 
 
@@ -86,9 +86,10 @@ for j in cnt:
 
 
 # distance from parent to child
-for k in range(len(inners)):
-    if inners[k] == True:
-        print(math.dist(centers[k],centers[k+1]))
+i = 0
+for k,v in inners.items():
+    if v == True:
+        print(f'{k} {math.dist(centers[k],centers[k+1])}')
 
 
 #show images side by side
