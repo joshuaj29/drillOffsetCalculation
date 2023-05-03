@@ -89,7 +89,8 @@ for j in cnt:
 i = 0
 for k,v in inners.items():
     if v == True:
-        print(f'{k} {math.dist(centers[k],centers[k+1])}')
+        print(f'{k} {math.dist(centers[i],centers[i+1])}')
+    i+=1
 
 
 #show images side by side
