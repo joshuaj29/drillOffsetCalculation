@@ -17,7 +17,7 @@ Figure 1: Result 1 (less input noise)
 
 Figure 2: Result 2 (greater input noise)
 
-![image](https://user-images.githubusercontent.com/124814751/223542581-0c760126-fb80-4405-aef7-3f6dd38c6fcb.png)
+![original_lowQual](https://user-images.githubusercontent.com/124814751/236031523-f117518a-ee61-4452-a46a-e25bcbfe1338.png)
 
 
 
