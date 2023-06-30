@@ -30,9 +30,6 @@ def loadImg(path, rotate=0):
     if rotate:
         img = cv2.rotate(img, cv2.ROTATE_180)
 
-    # Copy image for side-by-side display at end
-    #origImg = img.copy()
-
     # Convert original image to gray. Could also do this in the imread function
     grayImg = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     return img, grayImg
@@ -51,7 +48,7 @@ def threshMask(grayImage):
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
     opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations = 1)
 
-    return opening
+    return thresh
 
 
 
@@ -83,110 +80,135 @@ def imgCont_Hier(threshold):
 
 
 
-def drawConcatCircles(image, contours, hierarchy):
-    cnt = []
-    inners = {}
-    holeDiams = {}
-    # Draw all detected contours on image in green with a thickness of 1 pixel
+def getConcatCircles(contours, hierarchy):
+    hContours = {}
+    arContours = {}
+    # finds and differentiates potential holes and annular-ring contours
     # loop looks at inner two tiers, 2nd and 3rd hierarchy tier
+    # i is the contour counter
     for i in range(len(hierarchy)):
         currentH = hierarchy[i]
-        #filled, no child, yes parent
+        # filled, no child, yes parent
         if currentH[2] == -1 and currentH[3] >= 0:
-            # Holes
-            # finding equivalent diameter. To be used later for offset calcs
-            area = cv2.contourArea(contours[i])
-            equDiam = np.sqrt(4*area/(np.pi))
-            holeDiams[f'{i}'] = equDiam
-
-            drawConCir_Helper(image, contours, i, cnt, inners, 0)
-
-        # unfilled, yes child, yes parent
+            # holes, bool is 0
+            hContours[f'{i}'] = [contours[i], 0]
         elif currentH[2] >= 0 and currentH[3] >= 0:
-            # annular ring
-            drawConCir_Helper(image, contours, i, cnt, inners, 1)
-
-    return cnt, inners, holeDiams
-
+            # annular ring, bool is 1
+            arContours[f'{i}'] = [contours[i], 1]
+    return hContours, arContours
 
 
-def drawConCir_Helper(image, contours, index, cntList, innersDict, boolInfo):
-    cntList.append(contours[index])
-    detect_contours(image, index, contours)
-    innersDict[f'{index}'] = boolInfo
+def filterCC(hContours, arContours):
+    hole_AR = {}
+    holeDiams = {}
+    for key in arContours:
+        arIndex = int(key)
+        holeIndex = arIndex+1
+        # check for annular-ring hole pair
+        if str(holeIndex) in hContours:
+            holeIndex = str(holeIndex)
+            hole_AR[key] = arContours[key]
+            hole_AR[holeIndex] = hContours[holeIndex]
+
+            # find equivalent diameter of holes. Used in offset calcs
+            area = cv2.contourArea(hContours[holeIndex][0])
+            equDiam = np.sqrt(4*area/(np.pi))
+            holeDiams[holeIndex] = equDiam
+
+    return hole_AR, holeDiams
 
 
 
-
-def detect_contours(imgFile, loopIndex, contours):
-        '''
-        detect_contour function draws specified contours onto the original image
-        imgFile - numpy array converted from file URL
-        loopIndex - (i). Integer. Is the current loop index
-        contours - list array. default parameter
-        hierarchy - list array of one. default parameter. 
-        '''
-        nstring = str(loopIndex)
-        cv2.drawContours(imgFile, contours, loopIndex, color=(0,200,0), thickness=1)
-        cv2.putText(imgFile, nstring, contours[loopIndex][0][0],
-            cv2.FONT_HERSHEY_SIMPLEX,0.35,(0,255,255),1,cv2.LINE_AA)
-        
-
-
-def centroids(image, cntList):
+def centroids(hole_AR):
     centers = []
+    centerPts = []
     # Find centroid of all remaining contours
-    for j in cntList:
-        M = cv2.moments(j)
+    for key, value in hole_AR.items():
+        M = cv2.moments(value[0])
         cx = int(M['m10']/M['m00'])
         cy = int(M['m01']/M['m00'])
         centers.append([cx,cy])
 
         pts = np.array([[cx-3,cy],[cx+3,cy],[cx,cy],[cx,cy+3],[cx,cy-3]], np.int32)
-        cv2.polylines(image,[pts],False,(0,0,255))
-    return centers
+        centerPts.append(pts)
+    return centers, centerPts
 
 
 
-
-
-def drawOffset(directoryPath, file, drDiameter, rotation=0):
-    #path = directoryPath + '/' + file
-    path = file
-
-    img, grayImg = loadImg(path, rotation)
-
-    opening = threshMask(grayImg)
-
-    contours, hierarchy = imgCont_Hier(opening)
-
-    cnt, inners, holeDiams = drawConcatCircles(img, contours, hierarchy)
-    
-    centers = centroids(img, cnt)
-
-
+def parChildDist(hole_AR, holeDiams, centers, drDiameter):
     # distance from parent to child
     i = 0
     hDiamKeys = list(holeDiams.keys())
     offsetDiff = []
-    for k,v in inners.items():
+    for k,v in hole_AR.items():
 
-        if v == False:
+        if v[1] == False:
             concatDist = math.dist(centers[i-1],centers[i])
             if k in hDiamKeys:
-                drillDiam = drDiameter
-                distMils = concatDist * drillDiam / holeDiams[k]
+                distMils = concatDist * drDiameter / holeDiams[k]
                 offsetDiff.append(distMils)
             else:
                 print(f'{k} {concatDist}pix')
                 pass
         i+=1
+    return offsetDiff
 
-    avgOff = np.mean(offsetDiff)
-    minOff = min(offsetDiff)
-    maxOff = max(offsetDiff)
 
-    statText = (f'Avg Offset: {round(avgOff,2)}mils     Min Offset: {round(minOff,2)}mils     Max Offset: {round(maxOff,2)}mils     Hole Diam: {drillDiam}mils')
+def offsetStats(offsetDiff):
+    if len(offsetDiff) == 0:
+        avgOff = 'N/A'
+        minOff = 'N/A'
+        maxOff = 'N/A'
+    else:
+        avgOff = np.mean(offsetDiff)
+        minOff = min(offsetDiff)
+        maxOff = max(offsetDiff)
+    return avgOff, minOff, maxOff
+
+
+def drawOnImage(image, hole_AR, centerPts):
+    colorDict = {'blue': (255,255,0), 'green': (0,200,0), 'red': (0,0,255), 'yellow': (0,255,255)}
+    for pts in centerPts:
+        cv2.polylines(image,[pts],False,colorDict['red'])
+    
+    for key, value in hole_AR.items():
+        contours = value[0]
+        if value[1]:
+            clr = colorDict['blue']
+        else:
+            clr = colorDict['green']
+        
+        nstring = key
+        cv2.drawContours(image, contours, -1, color=clr, thickness=1)
+        cv2.putText(image, nstring, contours[0][0],
+            cv2.FONT_HERSHEY_SIMPLEX,0.35,colorDict['yellow'],1,cv2.LINE_AA)
+    
+
+
+
+
+
+def drawOffset(file, drDiameter, rotation=0):
+    img, grayImg = loadImg(file, rotation)
+
+    opening = threshMask(grayImg)
+
+    contours, hierarchy = imgCont_Hier(opening)
+
+
+    hContours, arContours = getConcatCircles(contours, hierarchy)
+    hole_AR, holeDiams = filterCC(hContours, arContours)
+    centers, centerPts = centroids(hole_AR)
+    offsetDiff = parChildDist(hole_AR, holeDiams, centers, drDiameter)
+    avgOff, minOff, maxOff = offsetStats(offsetDiff)
+    drawOnImage(img, hole_AR, centerPts)
+
+
+
+    if type(avgOff) is str:
+        statText = (f'Avg Offset: {avgOff}     Min Offset: {minOff}     Max Offset: {maxOff}     Hole Diam: {drDiameter}mils')
+    else:
+        statText = (f'Avg Offset: {round(avgOff,2)}mils     Min Offset: {round(minOff,2)}mils     Max Offset: {round(maxOff,2)}mils     Hole Diam: {drDiameter}mils')
 
     cv2.putText(img, statText, (60,25),
             cv2.FONT_HERSHEY_SIMPLEX,0.35,(0,255,255),1,cv2.LINE_AA)
@@ -200,6 +222,7 @@ def drawOffset(directoryPath, file, drDiameter, rotation=0):
 
 
 def onePanel(fileDictionary, key):
+    file1, file2, file3, file4, diam1, diam2, diam3, diam4 = False, False, False, False, False, False, False, False
     for item in fileDictionary[key]:
         position = item[3:5]
         if position == 'TR':
@@ -247,14 +270,29 @@ def xrayFiles(directoryPath):
      
 
 
+def imgDimensions(image):
+    imgHeight, imgWidth = image.shape[:2]
+    bigImage = np.zeros([imgHeight*2, imgWidth*2,3], dtype=np.uint8)
+    return imgHeight, imgWidth, bigImage
+
+
+
+def fullOffStat(od1, od2, od3, od4):
+    offDiff_all = od1 + od2 + od3 + od4
+    for offset in reversed(offDiff_all):
+        if offset == 'N/A':
+            offDiff_all.pop(offset)
+
+    meanOffDiff = np.mean(offDiff_all)
+    minOffDiff = min(offDiff_all)
+    maxOffDiff = max(offDiff_all)
+    return meanOffDiff, minOffDiff, maxOffDiff
+
 
 
 def main():
     directoryPath = 'C:/Users/joshuaj/Documents/Extra/Learning/opencv/Xray photos/PlTesting'
     fileDict = xrayFiles(directoryPath)
-
-    # dict for storing image files - for saving
-    allFiles = {}
 
     for key in fileDict:
         # panel number
@@ -264,31 +302,46 @@ def main():
         os.chdir(directoryPath)
         file1, file2, file3, file4, drDiam1, drDiam2, drDiam3, drDiam4 = onePanel(fileDict, key)
 
-        img, offDiff1 = drawOffset(directoryPath, file1, drDiam1)
-        img2, offDiff2 = drawOffset(directoryPath, file2, drDiam2)
-        img3, offDiff3 = drawOffset(directoryPath, file3, drDiam3, 1)
-        img4, offDiff4 = drawOffset(directoryPath, file4, drDiam4, 1)
+        blankArr = np.array([None])
+        img1, img2, img3, img4 = blankArr, blankArr, blankArr, blankArr
+
+        if file1:
+            img1, offDiff1 = drawOffset(file1, drDiam1)
+        if file2:
+            img2, offDiff2 = drawOffset(file2, drDiam2)
+        if file3:
+            img3, offDiff3 = drawOffset(file3, drDiam3, 1)
+        if file4:
+            img4, offDiff4 = drawOffset(file4, drDiam4, 1)
 
 
-        offDiff_all = offDiff1 + offDiff2 + offDiff3 + offDiff4
-        meanOffDiff = np.mean(offDiff_all)
-        minOffDiff = min(offDiff_all)
-        maxOffDiff = max(offDiff_all)
+        meanOffDiff, minOffDiff, maxOffDiff = fullOffStat(offDiff1, offDiff2, offDiff3, offDiff4)
 
-        imgHeight, imgWidth = img.shape[:2]
-        bigImage = np.zeros([imgHeight*2, imgWidth*2,3], dtype=np.uint8)
+        # logic for when one image is missing
+        if img1.any() != None:
+            imgHeight, imgWidth, bigImage = imgDimensions(img1)
+        elif img2.any() != None:
+            imgHeight, imgWidth, bigImage = imgDimensions(img2)
+        elif img3.any() != None:
+            imgHeight, imgWidth, bigImage = imgDimensions(img3)
+        elif img4.any() != None:
+            imgHeight, imgWidth, bigImage = imgDimensions(img4)
 
         #quadrant 1
-        bigImage[0:imgHeight,imgWidth:] = img
+        if img1.any() != None:
+            bigImage[0:imgHeight,imgWidth:] = img1
 
         # quadrant 2
-        bigImage[0:imgHeight,0:imgWidth] = img2
+        if img2.any() != None:
+            bigImage[0:imgHeight,0:imgWidth] = img2
 
         #quadrant 3
-        bigImage[imgHeight:, 0:imgWidth] = img3
+        if img3.any() != None:
+            bigImage[imgHeight:, 0:imgWidth] = img3
 
         #quadrant 4
-        bigImage[imgHeight:, imgWidth:] = img4
+        if img4.any() != None:
+            bigImage[imgHeight:, imgWidth:] = img4
 
 
         cv2.putText(bigImage, f'Panel {pNum}', (imgHeight+125,imgWidth-265),
@@ -302,11 +355,6 @@ def main():
 
 
 
-        #show images side by side
-        #display = np.concatenate((origImg, img), axis=1)
-        #cv2.imshow('Input | Detected Contours', display)
-        #cv2.imshow(f'Panel {key.decode()} Registration', bigImage)
-
         # change path for saving
         os.chdir('C:/Users/joshuaj/Documents/Extra/Learning/opencv/Xray photos/PlOutput')
 
@@ -315,11 +363,6 @@ def main():
         newFile = f'Panel {pNum} Registration.png'
         cv2.imwrite(newFile, bigImage)
 
-        
-    '''
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    '''
 
 
 
