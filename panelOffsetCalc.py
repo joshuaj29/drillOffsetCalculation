@@ -92,19 +92,40 @@ def getConcatCircles(contours, hierarchy):
         if currentH[2] == -1 and currentH[3] >= 0:
             # holes, bool is 0
             hContours[f'{i}'] = [contours[i], 0]
+        elif currentH[2] >= 0 and currentH[3] == -1:
+            # annular ring, bool is 1
+            arContours[f'{i}'] = [contours[i], 1]
+    return hContours, arContours
+
+
+
+def getCirclePair(contours, hierarchy):
+    hContours = {}
+    arContours = {}
+    # finds and differentiates potential holes and annular-ring contours
+    # loop looks at inner two tiers, 2nd and 3rd hierarchy tier
+    # i is the contour counter
+    for i in range(len(hierarchy)):
+        currentH = hierarchy[i]
+        # filled, no child, yes parent
+        if currentH[2] == -1 and currentH[3] >= 0:
+            # holes, bool is 0
+            hContours[f'{i}'] = [contours[i], 0]
         elif currentH[2] >= 0 and currentH[3] >= 0:
             # annular ring, bool is 1
             arContours[f'{i}'] = [contours[i], 1]
     return hContours, arContours
 
 
-def filterCC(hContours, arContours):
+
+def filterCC(hContours, arContours, outsideAR = 2):
     hole_AR = {}
     holeDiams = {}
     for key in arContours:
         arIndex = int(key)
-        holeIndex = arIndex+1
-        # check for annular-ring hole pair
+        print(outsideAR)
+        holeIndex = arIndex + outsideAR
+        # check for outside annular-ring hole pair
         if str(holeIndex) in hContours:
             holeIndex = str(holeIndex)
             hole_AR[key] = arContours[key]
@@ -146,7 +167,10 @@ def parChildDist(hole_AR, holeDiams, centers, drDiameter):
             concatDist = math.dist(centers[i-1],centers[i])
             if k in hDiamKeys:
                 distMils = concatDist * drDiameter / holeDiams[k]
-                offsetDiff.append(distMils)
+
+                if distMils <= 20:
+
+                    offsetDiff.append(distMils)
             else:
                 print(f'{k} {concatDist}pix')
                 pass
@@ -188,16 +212,20 @@ def drawOnImage(image, hole_AR, centerPts):
 
 
 
-def drawOffset(file, drDiameter, rotation=0):
+def drawOffset(file, drDiameter, arType, rotation=0):
     img, grayImg = loadImg(file, rotation)
 
     opening = threshMask(grayImg)
 
     contours, hierarchy = imgCont_Hier(opening)
 
+    if arType:
+        hContours, arContours = getConcatCircles(contours, hierarchy)
+        hole_AR, holeDiams = filterCC(hContours, arContours)
+    else:
+        hContours, arContours = getCirclePair(contours, hierarchy)
+        hole_AR, holeDiams = filterCC(hContours, arContours, outsideAR=1)
 
-    hContours, arContours = getConcatCircles(contours, hierarchy)
-    hole_AR, holeDiams = filterCC(hContours, arContours)
     centers, centerPts = centroids(hole_AR)
     offsetDiff = parChildDist(hole_AR, holeDiams, centers, drDiameter)
     avgOff, minOff, maxOff = offsetStats(offsetDiff)
@@ -223,27 +251,37 @@ def drawOffset(file, drDiameter, rotation=0):
 
 def onePanel(fileDictionary, key):
     file1, file2, file3, file4, diam1, diam2, diam3, diam4 = False, False, False, False, False, False, False, False
+    arType1, arType2, arType3, arType4 = True, True, True, True
     for item in fileDictionary[key]:
         position = item[3:5]
+        ar = item[8:11]
         if position == 'TR':
             file1 = item
             diam1 = bitDiameter(item)
+            if '_1' in ar:
+                arType1 = False
         elif position == 'TL':
             file2 = item
             diam2 = bitDiameter(item)
+            if '_1' in ar:
+                arType2 = False
         elif position == 'BL':
             file3 = item
             diam3 = bitDiameter(item)
+            if '_1' in ar:
+                arType3 = False
         elif position == 'BR':
             file4 = item
             diam4 = bitDiameter(item)
+            if '_1' in ar:
+                arType4 = False
     
-    return file1, file2, file3, file4, diam1, diam2, diam3, diam4
+    return file1, file2, file3, file4, diam1, diam2, diam3, diam4, arType1, arType2, arType3, arType4
 
 
 def bitDiameter(file):
     hDiam = file[6:9]
-    if hDiam[-1] == '.':
+    if (hDiam[-1] == '.') or (hDiam[-1] == '_'):
         hDiam = hDiam[:-1]
 
     hDiam = float(hDiam)/10
@@ -283,10 +321,30 @@ def fullOffStat(od1, od2, od3, od4):
         if offset == 'N/A':
             offDiff_all.pop(offset)
 
-    meanOffDiff = np.mean(offDiff_all)
-    minOffDiff = min(offDiff_all)
-    maxOffDiff = max(offDiff_all)
+    if len(offDiff_all) != 0:
+        meanOffDiff = np.mean(offDiff_all)
+        minOffDiff = min(offDiff_all)
+        maxOffDiff = max(offDiff_all)
+    else:
+        meanOffDiff, minOffDiff, maxOffDiff = 'N/A', 'N/A', 'N/A'
     return meanOffDiff, minOffDiff, maxOffDiff
+
+
+
+def addTextStats(bigImage, height, width, pNum, mean, min, max):
+    if type(mean) is np.float64:
+        mean = round(mean,2)
+        max = round(max,2)
+        min = round(min,2)
+
+    cv2.putText(bigImage, f'Panel {pNum}', (height+125,width-265),
+            cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
+    cv2.putText(bigImage, f'Overall Avg: {mean}mils', (height+80,width-250),
+            cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
+    cv2.putText(bigImage, f'Overall Min: {max}mils', (height+80,width-235),
+            cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
+    cv2.putText(bigImage, f'Overall Max: {min}mils', (height+80,width-220),
+            cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
 
 
 
@@ -300,19 +358,19 @@ def main():
 
         # resetting the active directory - changes when saving
         os.chdir(directoryPath)
-        file1, file2, file3, file4, drDiam1, drDiam2, drDiam3, drDiam4 = onePanel(fileDict, key)
+        file1, file2, file3, file4, drDiam1, drDiam2, drDiam3, drDiam4, arType1, arType2, arType3, arType4 = onePanel(fileDict, key)
 
         blankArr = np.array([None])
         img1, img2, img3, img4 = blankArr, blankArr, blankArr, blankArr
 
         if file1:
-            img1, offDiff1 = drawOffset(file1, drDiam1)
+            img1, offDiff1 = drawOffset(file1, drDiam1, arType1)
         if file2:
-            img2, offDiff2 = drawOffset(file2, drDiam2)
+            img2, offDiff2 = drawOffset(file2, drDiam2, arType2)
         if file3:
-            img3, offDiff3 = drawOffset(file3, drDiam3, 1)
+            img3, offDiff3 = drawOffset(file3, drDiam3, arType3, 1)
         if file4:
-            img4, offDiff4 = drawOffset(file4, drDiam4, 1)
+            img4, offDiff4 = drawOffset(file4, drDiam4, arType4, 1)
 
 
         meanOffDiff, minOffDiff, maxOffDiff = fullOffStat(offDiff1, offDiff2, offDiff3, offDiff4)
@@ -344,14 +402,7 @@ def main():
             bigImage[imgHeight:, imgWidth:] = img4
 
 
-        cv2.putText(bigImage, f'Panel {pNum}', (imgHeight+125,imgWidth-265),
-                cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
-        cv2.putText(bigImage, f'Overall Avg: {round(meanOffDiff,2)}mils', (imgHeight+80,imgWidth-250),
-                cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
-        cv2.putText(bigImage, f'Overall Min: {round(minOffDiff,2)}mils', (imgHeight+80,imgWidth-235),
-                cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
-        cv2.putText(bigImage, f'Overall Max: {round(maxOffDiff,2)}mils', (imgHeight+80,imgWidth-220),
-                cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,255,255),1,cv2.LINE_AA)
+        addTextStats(bigImage, imgHeight, imgWidth, pNum, meanOffDiff, minOffDiff, maxOffDiff)
 
 
 
